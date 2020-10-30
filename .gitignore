@@ -1,1 +1,3 @@
 Manifest.toml
+Project.toml
+mysql_connection.yml

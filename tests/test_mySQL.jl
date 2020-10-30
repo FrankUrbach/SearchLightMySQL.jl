@@ -3,75 +3,61 @@ using Pkg
 using Test, TestSetExtensions, SafeTestsets
 using SearchLight
 
-@testset "Core features PostgreSQL" begin
+@testset "Core features MySQL" begin
 
-  @safetestset "PostgresSQL configuration" begin
+  @safetestset "MySQL configuration" begin
     using SearchLight
-    using SearchLightPostgreSQL
+    using SearchLightMySQL
 
-    connection_file = joinpath("tests","postgres_connection.yml")
+    connection_file = "mysql_connection.yml"
 
-    conn_info_postgres = SearchLight.Configuration.load(connection_file)
+    conn_info_mysql = SearchLight.Configuration.load(connection_file)
 
-    @test conn_info_postgres["adapter"] == "PostgreSQL"
-    @test conn_info_postgres["host"] == "127.0.0.1"
-    @test conn_info_postgres["password"] == "postgres"
-    @test conn_info_postgres["config"]["log_level"] == ":debug"
-    @test conn_info_postgres["config"]["log_queries"] == true
-    @test conn_info_postgres["port"] == 5432
-    @test conn_info_postgres["username"] == "postgres"
-    @test conn_info_postgres["database"] == "searchlight_tests"
+    @test conn_info_mysql["adapter"] == "MySQL"
+    @test conn_info_mysql["host"] == "127.0.0.1"
+    @test conn_info_mysql["config"]["log_level"] == ":debug"
+    @test conn_info_mysql["config"]["log_queries"] == true
+    @test conn_info_mysql["port"] == 3306
+    @test conn_info_mysql["username"] == "root"
+    @test conn_info_mysql["database"] == "searchlight_tests"
 
   end;
 
-  @safetestset "PostgresSQL connection" begin
+  @safetestset "MySQL connection" begin
     using SearchLight
-    using SearchLightPostgreSQL
-    using LibPQ
+    using SearchLightMySQL
 
-    connection_file = joinpath("tests","postgres_connection.yml")
+    connection_file = "mysql_connection.yml"
 
-    conn_info_postgres = SearchLight.Configuration.load(connection_file)
+    conn_info_mysql = SearchLight.Configuration.load(connection_file)
 
-    postgres_Connection = SearchLight.connect(conn_info_postgres)
+    mySQL_Connection = SearchLight.connect(conn_info_mysql)
 
-    infoDB = LibPQ.conninfo(postgres_Connection)
-
-    keysInfo = Dict{String, String}()
-
-    push!(keysInfo, "host"=>"127.0.0.1")
-    push!(keysInfo, "port"=>"5432")
-    push!(keysInfo, "dbname" => "searchlight_tests")
-    push!(keysInfo, "user"=> "postgres")
-
-    for info in keysInfo
-      infokey = info[1]
-      infoVal = info[2]
-      indexInfo = Base.findfirst(x->x.keyword == infokey, infoDB)
-      valInfo = infoDB[indexInfo].val
-      @test infoVal == valInfo
-    end
+    @test mySQL_Connection.host == "127.0.0.1"
+    @test mySQL_Connection.port == "3306"
+    @test mySQL_Connection.db == "searchlight_tests"
+    @test mySQL_Connection.user == "root"
 
     ######## teardwon #######
-    if postgres_Connection !== nothing
-      SearchLight.disconnect(postgres_Connection)
+    if mySQL_Connection !== nothing
+      SearchLight.disconnect(mySQL_Connection)
       println("Database connection was disconnected")
     end
 
   end;
 
-  @safetestset "PostgresSQL query" begin
+  @safetestset "MySQL query" begin
     using SearchLight
-    using SearchLightPostgreSQL
+    using SearchLightMySQL
     using SearchLight.Configuration
     using SearchLight.Migrations
 
-    conn_file = joinpath("tests","postgres_connection.yml")
+    conn_file = "mysql_connection.yml"
 
-    conn_info = Configuration.load(conn_file)
+    conn_info = SearchLight.Configuration.load(conn_file)
     conn = SearchLight.connect(conn_info)
 
-    queryString = string("select table_name from information_schema.tables where table_name = '",SearchLight.SEARCHLIGHT_MIGRATIONS_TABLE_NAME,"'")
+    queryString = "SHOW TABLES"
 
     @test isempty(SearchLight.query(queryString,conn)) == true
     
@@ -87,7 +73,7 @@ using SearchLight
     ############# teardown ###############
     if conn !== nothing
       ############ drop migrations_table ######################
-      queryString = string("select table_name from information_schema.tables where table_name = '", SearchLight.SEARCHLIGHT_MIGRATIONS_TABLE_NAME , "'" )
+      queryString = "SHOW TABLES"
       resQuery = SearchLight.query(queryString)
       if size(resQuery,1) >  0 
         queryString = string("drop table ", SearchLight.SEARCHLIGHT_MIGRATIONS_TABLE_NAME)
