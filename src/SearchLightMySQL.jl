@@ -341,6 +341,19 @@ function SearchLight.Migration.create_migrations_table(table_name::String = Sear
   nothing
 end
 
+"""
+    drop_migrations_table(table_name::String)::Nothing
+
+Runs a SQL DB query that drops the table `table_name`.
+"""
+function SearchLight.Migration.drop_migrations_table(table_name::String = SearchLight.config.db_migrations_table_name) :: Nothing
+  SearchLight.query("DROP TABLE $table_name")
+
+  @info "Droped table $table_name"
+
+  nothing
+end
+
 
 function SearchLight.Migration.create_table(f::Function, name::Union{String,Symbol}, options::Union{String,Symbol} = "") :: Nothing
   create_table_sql(f, string(name), options) |> SearchLight.query
