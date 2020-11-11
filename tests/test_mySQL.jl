@@ -1,7 +1,6 @@
 using Pkg
 
 using Test, TestSetExtensions, SafeTestsets
-using SearchLight
 
 @testset "Core features MySQL" begin
 
@@ -9,7 +8,7 @@ using SearchLight
     using SearchLight
     using SearchLightMySQL
 
-    connection_file = "mysql_connection.yml"
+    connection_file = joinpath("tests","mysql_connection.yml")
 
     conn_info_mysql = SearchLight.Configuration.load(connection_file)
 
@@ -27,7 +26,7 @@ using SearchLight
     using SearchLight
     using SearchLightMySQL
 
-    connection_file = "mysql_connection.yml"
+    connection_file = joinpath("tests","mysql_connection.yml")
 
     conn_info_mysql = SearchLight.Configuration.load(connection_file)
 
@@ -52,7 +51,7 @@ using SearchLight
     using SearchLight.Configuration
     using SearchLight.Migrations
 
-    conn_file = "mysql_connection.yml"
+    conn_file = joinpath("tests","mysql_connection.yml")
 
     conn_info = SearchLight.Configuration.load(conn_file)
     conn = SearchLight.connect(conn_info)
