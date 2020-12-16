@@ -2,6 +2,7 @@ module SearchLightMySQL
 
 import MySQL, DataFrames, DataStreams, Logging
 import SearchLight
+import SearchLight: storableFields, fields_to_store_directly
 import DBInterface
 
 
@@ -23,7 +24,7 @@ const ResultHandle   = DataStreams.Data.Rows
 
 const TYPE_MAPPINGS = Dict{Symbol,Symbol}( # Julia => MySQL
   :char       => :CHARACTER,
-  :string     => :VARCHAR,
+  :string     => Symbol("VARCHAR(255)"),
   :text       => :TEXT,
   :integer    => :INTEGER,
   :int        => :INTEGER,
@@ -35,7 +36,8 @@ const TYPE_MAPPINGS = Dict{Symbol,Symbol}( # Julia => MySQL
   :date       => :DATE,
   :binary     => :BLOB,
   :boolean    => :BOOLEAN,
-  :bool       => :BOOLEAN
+  :bool       => :BOOLEAN,
+  :dbid       => :BIGINT
 )
 
 const CONNECTIONS = DatabaseHandle[]
@@ -189,16 +191,44 @@ function SearchLight.to_find_sql(m::Type{T}, q::SearchLight.SQLQuery, joins::Uni
   replace(sql, r"\s+"=>" ")
 end
 
+### fallback function if storableFields not defined in the module
+function storableFields(m::Type{T})::Dict{String,String} where {T<:SearchLight.AbstractModel}
+  tmpStorage = Dict{String,String}()
+  for field in SearchLight.persistable_fields(m)
+    push!(tmpStorage, field => field)
+  end
+  return tmpStorage
+end
+
+"""
+  Only direct storable fields will be returnd by this function.
+  The fields with an AbstractModel-field or array will be stored temporarly 
+  in the saving method and saved after returning the parent struct.
+"""
+function fields_to_store_directly(m::Type{T}) where {T<:SearchLight.AbstractModel}
+
+  storage_fields = storableFields(m)
+  fields_and_types = SearchLight.to_string_dict(m)
+  uf=Dict{String,String}()
+
+  for (key,value) in storage_fields
+    if !(fields_and_types[key]<:SearchLight.AbstractModel || fields_and_types[key]<:Array{<:SearchLight.AbstractModel,1})
+      push!(uf,key => value)
+    end
+  end
+
+  return uf
+end
 
 function SearchLight.to_store_sql(m::T; conflict_strategy = :error)::String where {T<:SearchLight.AbstractModel}
-  uf = SearchLight.persistable_fields(typeof(m))
+  uf = fields_to_store_directly(typeof(m))
 
   sql = if ! SearchLight.ispersisted(m) || (SearchLight.ispersisted(m) && conflict_strategy == :update)
-    pos = findfirst(x -> x == SearchLight.primary_key_name(m), uf)
-    pos > 0 && splice!(uf, pos)
+    key = getkey(uf, SearchLight.primary_key_name(m), nothing)
+    key !== nothing && pop!(uf, key)
 
     fields = SearchLight.SQLColumn(uf)
-    vals = join( map(x -> string(SearchLight.to_sqlinput(m, Symbol(x), getfield(m, Symbol(x)))), uf), ", ")
+    vals = join( map(x -> string(SearchLight.to_sqlinput(m, Symbol(x), getfield(m, Symbol(x)))), collect(keys(uf))), ", ")
 
     "INSERT INTO $(SearchLight.table(typeof(m))) ( $fields ) VALUES ( $vals )" *
         if ( conflict_strategy == :error ) ""
@@ -207,13 +237,23 @@ function SearchLight.to_store_sql(m::T; conflict_strategy = :error)::String wher
           " ON DUPLICATE KEY UPDATE $(SearchLight.update_query_part(m))"
         else ""
         end
-  else
-    "UPDATE $(SearchLight.table(typeof(m))) SET $(SearchLight.update_query_part(m))"
-  end
-
-  sql
-end
-
+      else
+        prepare_update_part(m)
+      end
+    
+      return sql *=";"
+    end
+    
+    function prepare_update_part(m::T)::String where {T<:SearchLight.AbstractModel}
+    
+      result = ""
+      sub_abstracts = SearchLight.array_sub_abstract_models(m)
+      if !isempty(sub_abstracts)
+        result = join(prepare_update_part.(sub_abstracts),";",";")
+        result *= ";"
+      end 
+      result *= "UPDATE $(SearchLight.table(typeof(m))) SET $(SearchLight.update_query_part(m))"
+    end
 
 function SearchLight.delete_all(m::Type{T}; truncate::Bool = true, reset_sequence::Bool = true, cascade::Bool = false)::Nothing where {T<:SearchLight.AbstractModel}
   (truncate ? "TRUNCATE $(SearchLight.table(m))" : "DELETE FROM $(SearchLight.table(m))") |> SearchLight.query
@@ -242,7 +282,9 @@ end
 
 
 function SearchLight.update_query_part(m::T)::String where {T<:SearchLight.AbstractModel}
-  update_values = join(map(x -> "$(string(SearchLight.SQLColumn(x))) = $(string(SearchLight.to_sqlinput(m, Symbol(x), getfield(m, Symbol(x)))))", SearchLight.persistable_fields(typeof(m))), ", ")
+  uf = fields_to_store_directly(typeof(m))
+
+  update_values = join(map(x -> "$(string(SearchLight.SQLColumn(uf[x]))) = $(string(SearchLight.to_sqlinput(m, Symbol(x), getfield(m, Symbol(x)))) )", collect(keys(uf))), ", ")
 
   " $update_values WHERE $(SearchLight.table(typeof(m))).$(SearchLight.primary_key_name(typeof(m))) = '$(m.id.value)'"
 end
@@ -330,13 +372,39 @@ Runs a SQL DB query that creates the table `table_name` with the structure neede
 The table should contain one column, `version`, unique, as a string of maximum 30 chars long.
 """
 function SearchLight.Migration.create_migrations_table(table_name::String = SearchLight.config.db_migrations_table_name) :: Nothing
-  SearchLight.query(
-    "CREATE TABLE `$table_name` (
-    `version` varchar(30) NOT NULL DEFAULT '',
-    PRIMARY KEY (`version`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8", internal = true)
+  
+  queryString = string("show tables where tables_in_searchlight_tests = '$(SearchLight.SEARCHLIGHT_MIGRATIONS_TABLE_NAME)'")
+  if isempty(SearchLight.query(queryString))
+    SearchLight.query(
+      "CREATE TABLE `$table_name` (
+      `version` varchar(30) NOT NULL DEFAULT '',
+      PRIMARY KEY (`version`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8", internal = true)
 
-  @info "Created table $table_name"
+    @info "Created table $table_name"
+  else
+    @info "Table $table_name already exists" 
+  end
+
+  nothing
+end
+
+"""
+    drop_migrations_table(table_name::String)::Nothing
+
+Runs a SQL DB query that drops the table `table_name`.
+"""
+function SearchLight.Migration.drop_migrations_table(table_name::String = SearchLight.config.db_migrations_table_name) :: Nothing
+  
+  
+  queryString = string("show tables where tables_in_searchlight_tests = '$table_name'")
+  if !isempty(SearchLight.query(queryString)) 
+
+      SearchLight.query("DROP TABLE $table_name")
+      @info "Droped table $table_name"
+  else
+      @info "Nothing to drop"
+  end
 
   nothing
 end
